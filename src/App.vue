@@ -402,7 +402,7 @@ onUnmounted(() => {
         </section>
 
         <section v-if="dshUrl" class="embedded-view">
-          <iframe :src="dshUrl" title="DSH Web 界面" class="dsh-frame" />
+          <iframe :src="dshUrl" title="DSH Web 界面" class="dsh-frame" allow="clipboard-read; clipboard-write" />
         </section>
       </template>
 
