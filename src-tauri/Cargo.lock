@@ -695,7 +695,7 @@ dependencies = [
 
 [[package]]
 name = "deepdash"
-version = "1.0.4"
+version = "1.0.5"
 dependencies = [
  "get_if_addrs",
  "reqwest 0.12.28",

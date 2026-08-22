@@ -1,5 +1,11 @@
 # DeepDash
 
+## 1.0.5 更新内容
+
+- 调整版本管理页的自动检查控件：放大“自动”标签，周期选项改为“每天 / 每周 / 永不”。
+- 缩短周期选择框，保持紧凑的版本工具栏布局。
+- 自动检查仍按选定周期运行，同一版本只弹出一次更新提示。
+
 DeepDash 是 Windows 桌面启动器，用于安装、切换和运行 [DeepSeek Harness（DSH）](https://github.com/deepseek-ai/deepseek-harness)。它提供原生窗口、版本管理和系统托盘控制，不封装或修改 DSH 官方 Web 界面。
 
 ## 功能
@@ -26,7 +32,7 @@ DeepDash 使用本机 npm 默认 global prefix，不捆绑 Node.js、npm 或 DSH
 
 从 [Releases](https://github.com/WT-Dream/DeepDash/releases) 下载并运行：
 
-`DeepDash_1.0.4_x64_en-US.msi`
+`DeepDash_1.0.5_x64_en-US.msi`
 
 安装后启动 DeepDash，在“版本管理”中安装或切换 DSH 版本，然后从启动面板启动 DSH Web。
 
@@ -35,6 +41,10 @@ DeepDash 使用本机 npm 默认 global prefix，不捆绑 Node.js、npm 或 DSH
 ## 手机局域网访问
 
 打开左侧“手机连接”，启用“手机局域网访问”，选择当前 Wi-Fi 对应的私有 IPv4 地址并保存。重启 DSH 后，在“手机连接”页面点击“显示二维码”即可按需生成二维码和访问地址。手机与电脑连接同一个可信 Wi-Fi 后，用浏览器扫码即可使用同一个 DSH Web 会话，完成扫码后可手动关闭二维码。
+
+启用手机访问时，DSH 仍只监听 `127.0.0.1`，不会绑定 `0.0.0.0`。DeepDash 会在所选的本机私有 IPv4 地址上启动临时 TCP 转发，将手机连接转发到本机 DSH；停止 DSH 或退出 DeepDash 时转发也会关闭。桌面端继续使用回环地址，手机端使用二维码中的局域网地址。
+
+DSH 沉浸页面右上角提供 DeepDash 快捷入口。鼠标移入小图标后，可直接打开手机二维码，关闭二维码不会退出 DSH；也可以返回 DeepDash 主界面，运行中的服务会保留，主界面按钮会变为“返回 DSH”。关闭窗口仍会按原逻辑停止 DSH 服务。
 
 DSH 可操作当前项目，因此局域网访问不提供登录隔离。仅在家庭或受信任的专用网络中开启，不要使用公共 Wi-Fi、不要在路由器上做端口转发，也不要将该地址暴露到公网。若手机无法打开地址，请确认 Windows 网络配置为“专用网络”，并在防火墙提示中仅允许专用网络访问。
 

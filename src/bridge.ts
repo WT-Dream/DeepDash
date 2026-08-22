@@ -46,7 +46,7 @@ const demoVersions: DshVersion[] = [
 ];
 
 export async function getConfig(): Promise<LauncherConfig> {
-  if (!inTauri) return { port: 3080, theme: "system", lanEnabled: false };
+  if (!inTauri) return { port: 3080, theme: "system", lanEnabled: false, versionCheckFrequency: "daily" };
   return invoke<LauncherConfig>("get_launcher_config");
 }
 

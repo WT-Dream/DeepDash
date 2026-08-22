@@ -1,15 +1,19 @@
 use std::{
-    net::{SocketAddr, TcpStream},
+    net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream},
     process::Stdio,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
     time::Duration,
 };
 
 use tauri::{AppHandle, Emitter};
 use tokio::{
-    io::{AsyncBufReadExt, BufReader},
+    io::{copy_bidirectional, AsyncBufReadExt, BufReader},
+    net::{TcpListener, TcpStream as TokioTcpStream},
     process::{Child, Command as TokioCommand},
-    sync::Mutex,
+    sync::{oneshot, Mutex},
     time::{sleep, timeout},
 };
 
@@ -21,10 +25,18 @@ use crate::{
 
 pub type ChildHandle = Arc<Mutex<Child>>;
 
+struct ProxyHandle {
+    shutdown: oneshot::Sender<()>,
+    task: tauri::async_runtime::JoinHandle<()>,
+}
+
 pub struct DshProcessManager {
     child: Arc<Mutex<Option<ChildHandle>>>,
     port: Arc<Mutex<Option<u16>>>,
     web_url: Arc<Mutex<Option<String>>>,
+    lan_url: Arc<Mutex<Option<String>>>,
+    lan_connected: Arc<Mutex<bool>>,
+    proxy: Arc<Mutex<Option<ProxyHandle>>>,
     stopping: Arc<Mutex<bool>>,
     runtime: Arc<Mutex<DshState>>,
     app: AppHandle,
@@ -36,6 +48,9 @@ impl DshProcessManager {
             child: Arc::new(Mutex::new(None)),
             port: Arc::new(Mutex::new(None)),
             web_url: Arc::new(Mutex::new(None)),
+            lan_url: Arc::new(Mutex::new(None)),
+            lan_connected: Arc::new(Mutex::new(false)),
+            proxy: Arc::new(Mutex::new(None)),
             stopping: Arc::new(Mutex::new(false)),
             runtime,
             app,
@@ -68,12 +83,8 @@ impl DshProcessManager {
                     status: DshLifecycleStatus::Running,
                     port: *self.port.lock().await,
                     url: self.web_url.lock().await.clone(),
-                    lan_url: self
-                        .web_url
-                        .lock()
-                        .await
-                        .clone()
-                        .filter(|url| !url.contains("127.0.0.1")),
+                    lan_url: self.lan_url.lock().await.clone(),
+                    lan_connected: *self.lan_connected.lock().await,
                     current_version,
                     error: None,
                 });
@@ -82,6 +93,9 @@ impl DshProcessManager {
             self.child.lock().await.take();
             self.port.lock().await.take();
             self.web_url.lock().await.take();
+            self.lan_url.lock().await.take();
+            *self.lan_connected.lock().await = false;
+            stop_proxy(self.proxy.lock().await.take()).await;
         }
         let environment = EnvironmentService;
         let dsh_path = environment.dsh_path()?;
@@ -89,8 +103,12 @@ impl DshProcessManager {
             .map(crate::network::selected_lan_host)
             .transpose()?
             .map(|host| host.address);
-        let bind_host = lan_host.as_deref().unwrap_or("127.0.0.1");
-        if port_is_in_use(bind_host, port) {
+        let bind_host = "127.0.0.1";
+        if port_is_in_use(bind_host, port)
+            || lan_host
+                .as_deref()
+                .is_some_and(|host| port_is_in_use(host, port))
+        {
             return Err(
                 LauncherError::new("portConflict", "目标端口已被其他程序占用。")
                     .with_action("请关闭占用该端口的 DSH 进程，或在设置中更换端口。")
@@ -147,14 +165,39 @@ impl DshProcessManager {
             Ok(Ok(())) => {
                 *self.child.lock().await = Some(Arc::clone(&process));
                 *self.port.lock().await = Some(port);
+                let lan_url = lan_host.as_ref().map(|host| url(host, port));
+                let proxy = if let Some(host) = lan_host.as_deref() {
+                    match start_proxy(
+                        host,
+                        port,
+                        Arc::clone(&self.lan_connected),
+                        Arc::clone(&self.runtime),
+                        self.app.clone(),
+                    )
+                    .await
+                    {
+                        Ok(proxy) => Some(proxy),
+                        Err(error) => {
+                            terminate_child(&process).await;
+                            self.child.lock().await.take();
+                            self.port.lock().await.take();
+                            return Err(error);
+                        }
+                    }
+                } else {
+                    None
+                };
                 *self.web_url.lock().await = Some(target_url.clone());
+                *self.lan_url.lock().await = lan_url.clone();
+                *self.proxy.lock().await = proxy;
                 *self.stopping.lock().await = false;
                 self.watch(process, port, current_version.clone(), log);
                 Ok(DshState {
                     status: DshLifecycleStatus::Running,
                     port: Some(port),
                     url: Some(target_url),
-                    lan_url: lan_host.map(|host| url(&host, port)),
+                    lan_url,
+                    lan_connected: false,
                     current_version,
                     error: None,
                 })
@@ -178,6 +221,10 @@ impl DshProcessManager {
         let child = self.child.lock().await.take();
         let port = self.port.lock().await.take();
         self.web_url.lock().await.take();
+        self.lan_url.lock().await.take();
+        *self.lan_connected.lock().await = false;
+        let proxy = self.proxy.lock().await.take();
+        stop_proxy(proxy).await;
         if let Some(child) = child {
             terminate_child(&child).await;
         }
@@ -186,6 +233,7 @@ impl DshProcessManager {
             port,
             url: None,
             lan_url: None,
+            lan_connected: false,
             current_version,
             error: None,
         })
@@ -201,6 +249,9 @@ impl DshProcessManager {
         let child_store = Arc::clone(&self.child);
         let port_store = Arc::clone(&self.port);
         let web_url_store = Arc::clone(&self.web_url);
+        let lan_url_store = Arc::clone(&self.lan_url);
+        let lan_connected_store = Arc::clone(&self.lan_connected);
+        let proxy_store = Arc::clone(&self.proxy);
         let stopping = Arc::clone(&self.stopping);
         let runtime = Arc::clone(&self.runtime);
         let app = self.app.clone();
@@ -222,11 +273,14 @@ impl DshProcessManager {
                 stored.take();
                 *port_store.lock().await = None;
                 web_url_store.lock().await.take();
+                lan_url_store.lock().await.take();
+                *lan_connected_store.lock().await = false;
             }
             drop(stored);
             if was_stopping || !was_owned {
                 return;
             }
+            stop_proxy(proxy_store.lock().await.take()).await;
             let detail = match exit {
                 Ok(value) => format!("进程退出码：{value}\n{}", log.lock().await.clone()),
                 Err(error) => error.to_string(),
@@ -239,6 +293,7 @@ impl DshProcessManager {
                 port: Some(port),
                 url: None,
                 lan_url: None,
+                lan_connected: false,
                 current_version,
                 error: Some(error),
             };
@@ -318,13 +373,80 @@ fn command_args(port: u16, lan_host: Option<&str>) -> Vec<String> {
     let mut args = vec!["web".to_string(), "--no-open".to_string()];
     if let Some(host) = lan_host {
         args.push("--host".to_string());
-        args.push(host.to_string());
+        args.push("127.0.0.1".to_string());
         args.push("--trusted-host".to_string());
         args.push(format!("{host}:{port}"));
     }
     args.push("--port".to_string());
     args.push(port.to_string());
     args
+}
+
+async fn start_proxy(
+    lan_host: &str,
+    port: u16,
+    lan_connected: Arc<Mutex<bool>>,
+    runtime: Arc<Mutex<DshState>>,
+    app: tauri::AppHandle,
+) -> Result<ProxyHandle, LauncherError> {
+    let listen_address = format!("{lan_host}:{port}");
+    let listener = TcpListener::bind(&listen_address).await.map_err(|error| {
+        LauncherError::new("lanProxyFailed", "无法启动手机局域网转发。")
+            .with_action("确认局域网地址仍属于本机，并检查端口是否被占用。")
+            .with_detail(error.to_string())
+            .with_port(port)
+    })?;
+    let target = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
+    let active_connections = Arc::new(AtomicUsize::new(0));
+    let (shutdown, mut shutdown_signal) = oneshot::channel();
+    let task = tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = &mut shutdown_signal => break,
+                accepted = listener.accept() => {
+                    let Ok((mut inbound, _)) = accepted else { break };
+                    let active_connections = Arc::clone(&active_connections);
+                    let lan_connected = Arc::clone(&lan_connected);
+                    let runtime = Arc::clone(&runtime);
+                    let app = app.clone();
+                    tauri::async_runtime::spawn(async move {
+                        let Ok(mut outbound) = TokioTcpStream::connect(target).await else { return };
+                        let active = active_connections.fetch_add(1, Ordering::AcqRel) + 1;
+                        if active == 1 {
+                            *lan_connected.lock().await = true;
+                            publish_lan_connection(&runtime, &app, true).await;
+                        }
+                        let _ = copy_bidirectional(&mut inbound, &mut outbound).await;
+                        let remaining = active_connections.fetch_sub(1, Ordering::AcqRel) - 1;
+                        if remaining == 0 {
+                            *lan_connected.lock().await = false;
+                            publish_lan_connection(&runtime, &app, false).await;
+                        }
+                    });
+                }
+            }
+        }
+    });
+    Ok(ProxyHandle { shutdown, task })
+}
+
+async fn publish_lan_connection(
+    runtime: &Arc<Mutex<DshState>>,
+    app: &tauri::AppHandle,
+    connected: bool,
+) {
+    let mut state = runtime.lock().await;
+    if state.lan_connected == connected {
+        return;
+    }
+    state.lan_connected = connected;
+    let _ = app.emit("launcher://dsh-state", state.clone());
+}
+
+async fn stop_proxy(proxy: Option<ProxyHandle>) {
+    let Some(proxy) = proxy else { return };
+    let _ = proxy.shutdown.send(());
+    let _ = timeout(Duration::from_secs(1), proxy.task).await;
 }
 
 fn url(host: &str, port: u16) -> String {
@@ -358,7 +480,7 @@ mod tests {
                 "web",
                 "--no-open",
                 "--host",
-                "192.168.2.9",
+                "127.0.0.1",
                 "--trusted-host",
                 "192.168.2.9:3080",
                 "--port",
