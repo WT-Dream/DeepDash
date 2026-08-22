@@ -1,4 +1,9 @@
-use std::{process::Stdio, sync::Arc, time::Duration};
+use std::{
+    net::{SocketAddr, TcpStream},
+    process::Stdio,
+    sync::Arc,
+    time::Duration,
+};
 
 use tauri::{AppHandle, Emitter};
 use tokio::{
@@ -70,6 +75,13 @@ impl DshProcessManager {
         }
         let environment = EnvironmentService;
         let dsh_path = environment.dsh_path()?;
+        if port_is_in_use(port) {
+            return Err(
+                LauncherError::new("portConflict", "目标端口已被其他程序占用。")
+                    .with_action("请关闭占用该端口的 DSH 进程，或在设置中更换端口。")
+                    .with_port(port),
+            );
+        }
         let port_arg = port.to_string();
         let args = ["web", "--no-open", "--port", port_arg.as_str()];
         let mut process = spawn_command(&dsh_path, &args)?;
@@ -282,4 +294,9 @@ pub async fn request_terminate(process: &ChildHandle) {
 
 fn url(port: u16) -> String {
     format!("http://127.0.0.1:{port}")
+}
+
+fn port_is_in_use(port: u16) -> bool {
+    let address = SocketAddr::from(([127, 0, 0, 1], port));
+    TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_ok()
 }
