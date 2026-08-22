@@ -2,6 +2,7 @@ mod config;
 mod environment;
 mod error_mapper;
 mod models;
+mod network;
 mod package_service;
 mod process_manager;
 mod versions;
@@ -14,7 +15,7 @@ use tokio::sync::Mutex;
 use config::{config_path_summary, data_root, LauncherConfigService};
 use environment::EnvironmentService;
 use error_mapper::LauncherError;
-use models::{DshLifecycleStatus, DshState, EnvironmentInfo, LauncherConfig};
+use models::{DshLifecycleStatus, DshState, EnvironmentInfo, LanHost, LauncherConfig};
 use package_service::DshPackageService;
 use process_manager::DshProcessManager;
 use versions::DshVersionService;
@@ -93,6 +94,11 @@ fn detect_environment(state: State<'_, AppState>) -> EnvironmentInfo {
 }
 
 #[tauri::command]
+fn get_lan_hosts() -> Result<Vec<LanHost>, LauncherError> {
+    network::lan_hosts()
+}
+
+#[tauri::command]
 async fn get_dsh_versions(
     state: State<'_, AppState>,
 ) -> Result<Vec<models::DshVersion>, LauncherError> {
@@ -123,6 +129,7 @@ async fn install_or_switch_dsh_version(
             status: next_status,
             port: None,
             url: None,
+            lan_url: None,
             current_version: current.clone(),
             error: None,
         },
@@ -159,6 +166,7 @@ async fn install_or_switch_dsh_version(
                 status,
                 port: error.port,
                 url: None,
+                lan_url: None,
                 current_version: state.environment.current_dsh_version().ok().flatten(),
                 error: Some(error.clone()),
             };
@@ -187,6 +195,15 @@ async fn start_dsh(
 ) -> Result<DshState, LauncherError> {
     let _operation = state.operation_lock.lock().await;
     let current = state.environment.current_dsh_version()?;
+    let config = state.config.load().map_err(|message| {
+        LauncherError::new("configReadFailed", message)
+            .with_detail(config_path_summary(&state.config))
+    })?;
+    let lan_host = if config.lan_enabled {
+        config.lan_host.as_deref()
+    } else {
+        None
+    };
     publish(
         &app,
         &state,
@@ -194,12 +211,13 @@ async fn start_dsh(
             status: DshLifecycleStatus::Starting,
             port: Some(port),
             url: None,
+            lan_url: None,
             current_version: current.clone(),
             error: None,
         },
     )
     .await;
-    match state.process.start(port, current.clone()).await {
+    match state.process.start(port, current.clone(), lan_host).await {
         Ok(next) => {
             publish(&app, &state, next.clone()).await;
             Ok(next)
@@ -214,6 +232,7 @@ async fn start_dsh(
                 status,
                 port: error.port.or(Some(port)),
                 url: None,
+                lan_url: None,
                 current_version: current,
                 error: Some(error.clone()),
             };
@@ -234,6 +253,7 @@ async fn stop_dsh(app: AppHandle, state: State<'_, AppState>) -> Result<DshState
             status: DshLifecycleStatus::Stopping,
             port: None,
             url: None,
+            lan_url: None,
             current_version: current.clone(),
             error: None,
         },
@@ -324,6 +344,7 @@ async fn restart_dsh(app: &AppHandle) {
             status: DshLifecycleStatus::Stopping,
             port: None,
             url: None,
+            lan_url: None,
             current_version: current.clone(),
             error: None,
         },
@@ -334,6 +355,7 @@ async fn restart_dsh(app: &AppHandle) {
             status: DshLifecycleStatus::StartFailed,
             port: None,
             url: None,
+            lan_url: None,
             current_version: current,
             error: Some(error),
         };
@@ -349,6 +371,7 @@ async fn restart_dsh(app: &AppHandle) {
                 status: DshLifecycleStatus::StartFailed,
                 port: None,
                 url: None,
+                lan_url: None,
                 current_version: current,
                 error: Some(error),
             };
@@ -363,12 +386,22 @@ async fn restart_dsh(app: &AppHandle) {
             status: DshLifecycleStatus::Starting,
             port: Some(config.port),
             url: None,
+            lan_url: None,
             current_version: current.clone(),
             error: None,
         },
     )
     .await;
-    match state.process.start(config.port, current.clone()).await {
+    let lan_host = if config.lan_enabled {
+        config.lan_host.as_deref()
+    } else {
+        None
+    };
+    match state
+        .process
+        .start(config.port, current.clone(), lan_host)
+        .await
+    {
         Ok(next) => publish(app, &state, next).await,
         Err(error) => {
             let status = match error.kind.as_str() {
@@ -380,6 +413,7 @@ async fn restart_dsh(app: &AppHandle) {
                 status,
                 port: error.port.or(Some(config.port)),
                 url: None,
+                lan_url: None,
                 current_version: current,
                 error: Some(error),
             };
@@ -435,6 +469,7 @@ pub fn run() {
             save_launcher_config,
             open_data_directory,
             detect_environment,
+            get_lan_hosts,
             get_dsh_versions,
             get_dsh_current_version,
             install_or_switch_dsh_version,

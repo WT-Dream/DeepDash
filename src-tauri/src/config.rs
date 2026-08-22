@@ -2,7 +2,7 @@ use std::{fs, io, path::PathBuf};
 
 use tauri::{AppHandle, Manager};
 
-use crate::{error_mapper::limit_text, models::LauncherConfig};
+use crate::{error_mapper::limit_text, models::LauncherConfig, network::is_private_lan_address};
 
 const CONFIG_FILE: &str = "launcher-config.json";
 
@@ -61,6 +61,20 @@ fn validate(config: &LauncherConfig) -> Result<(), crate::models::LauncherError>
             "invalidTheme",
             "主题模式无效。",
         ));
+    }
+    if config.lan_enabled {
+        let Some(host) = config.lan_host.as_deref() else {
+            return Err(crate::models::LauncherError::new(
+                "lanHostRequired",
+                "启用手机局域网访问时必须选择本机局域网地址。",
+            ));
+        };
+        if !is_private_lan_address(host) {
+            return Err(crate::models::LauncherError::new(
+                "invalidLanHost",
+                "局域网地址必须是本机私有 IPv4 地址。",
+            ));
+        }
     }
     Ok(())
 }

@@ -6,6 +6,10 @@ pub struct LauncherConfig {
     pub port: u16,
     #[serde(default = "default_theme")]
     pub theme: String,
+    #[serde(default)]
+    pub lan_enabled: bool,
+    #[serde(default)]
+    pub lan_host: Option<String>,
 }
 
 impl Default for LauncherConfig {
@@ -13,8 +17,17 @@ impl Default for LauncherConfig {
         Self {
             port: 3080,
             theme: default_theme(),
+            lan_enabled: false,
+            lan_host: None,
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LanHost {
+    pub name: String,
+    pub address: String,
 }
 
 fn default_theme() -> String {
@@ -97,6 +110,7 @@ pub struct DshState {
     pub status: DshLifecycleStatus,
     pub port: Option<u16>,
     pub url: Option<String>,
+    pub lan_url: Option<String>,
     pub current_version: Option<String>,
     pub error: Option<LauncherError>,
 }
@@ -107,6 +121,7 @@ impl DshState {
             status: DshLifecycleStatus::ReadyToStart,
             port: None,
             url: None,
+            lan_url: None,
             current_version: version,
             error: None,
         }
@@ -117,6 +132,7 @@ impl DshState {
             status: DshLifecycleStatus::Stopped,
             port: None,
             url: None,
+            lan_url: None,
             current_version: version,
             error: None,
         }

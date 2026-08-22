@@ -1,6 +1,6 @@
 [package]
 name = "deepdash"
-version = "1.0.3"
+version = "1.0.4"
 description = "DeepSeek Harness desktop launcher"
 authors = ["DeepDash contributors"]
 edition = "2021"
@@ -13,6 +13,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+get_if_addrs = "0.5"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 semver = { version = "1", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }

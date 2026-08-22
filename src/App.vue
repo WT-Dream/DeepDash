@@ -7,6 +7,7 @@ import {
   Check,
   ChevronRight,
   CircleHelp,
+  Copy,
   ExternalLink,
   FolderOpen,
   Gauge,
@@ -20,11 +21,13 @@ import {
   Wifi,
   X,
 } from "lucide-vue-next";
+import QRCode from "qrcode";
 import {
   cancelPackageOperation,
   detectEnvironment,
   getConfig,
   getCurrentVersion,
+  getLanHosts,
   getStatus,
   getVersions,
   installOrSwitch,
@@ -44,6 +47,7 @@ import type {
   EnvironmentInfo,
   LauncherConfig,
   LauncherError,
+  LanHost,
   OperationProgress,
   ThemeMode,
   ViewName,
@@ -51,7 +55,7 @@ import type {
 import mascotImage from "./assets/dsh-mascot.png";
 
 const activeView = ref<ViewName>("dashboard");
-const config = ref<LauncherConfig>({ port: 3080, theme: "system" });
+const config = ref<LauncherConfig>({ port: 3080, theme: "system", lanEnabled: false });
 const environment = ref<EnvironmentInfo>();
 const versions = ref<DshVersion[]>([]);
 const state = ref<DshState>({ status: "stopped" });
@@ -62,8 +66,13 @@ const loading = ref(true);
 const refreshing = ref(false);
 const busy = ref(false);
 const portDraft = ref(3080);
+const lanEnabledDraft = ref(false);
+const lanHostDraft = ref("");
+const lanHosts = ref<LanHost[]>([]);
 const configSaved = ref(false);
 const dshUrl = ref<string>();
+const lanQrCode = ref<string>();
+const lanPanelOpen = ref(false);
 const unlisten: Array<(() => void) | undefined> = [];
 let systemThemeMedia: MediaQueryList | undefined;
 
@@ -89,6 +98,8 @@ const latestVersion = computed(() => versions.value.find((item) => item.tags.inc
 const canStart = computed(() => Boolean(environment.value?.dsh.found) && !busy.value && !isStarting.value && !isRunning.value);
 const canManageVersions = computed(() => Boolean(environment.value?.npm.found) && !busy.value);
 const themeOptions: Array<[ThemeMode, string]> = [["system", "跟随系统"], ["light", "浅色"], ["dark", "深色"]];
+const lanAccessUrl = computed(() => state.value.lanUrl);
+const dshBindAddress = computed(() => lanAccessUrl.value?.replace(/^https?:\/\//, "") ?? `127.0.0.1:${config.value.port}`);
 
 function resolvedTheme(mode: ThemeMode) {
   return mode === "system"
@@ -122,6 +133,11 @@ function errorTitle(value?: LauncherError) {
     invalidPort: "端口无效",
     processExited: "DSH 进程已退出",
     invalidTheme: "主题设置无效",
+    lanHostRequired: "请选择局域网地址",
+    invalidLanHost: "局域网地址无效",
+    lanHostUnavailable: "局域网地址不可用",
+    lanDiscoveryFailed: "无法读取局域网地址",
+    qrCodeFailed: "二维码生成失败",
     dataDirectoryUnavailable: "数据目录不可用",
     dataDirectoryOpenFailed: "无法打开数据目录",
   };
@@ -163,10 +179,61 @@ function normalizeError(cause: unknown): LauncherError {
 }
 
 async function updateState(next: DshState) {
+  const previousLanUrl = state.value.lanUrl;
   state.value = next;
   currentVersion.value = next.currentVersion ?? currentVersion.value;
   dshUrl.value = next.status === "running" ? next.url : undefined;
   if (next.error) error.value = next.error;
+  if (!next.lanUrl) {
+    lanQrCode.value = undefined;
+    lanPanelOpen.value = false;
+  } else if (next.lanUrl !== previousLanUrl) {
+    lanQrCode.value = undefined;
+  }
+}
+
+async function toggleLanPanel() {
+  if (lanPanelOpen.value) {
+    lanPanelOpen.value = false;
+    return;
+  }
+  if (!lanAccessUrl.value) return;
+  if (!lanQrCode.value) {
+    try {
+      lanQrCode.value = await QRCode.toDataURL(lanAccessUrl.value, {
+        margin: 1,
+        width: 224,
+        errorCorrectionLevel: "M",
+      });
+    } catch {
+      error.value = { kind: "qrCodeFailed", message: "无法生成二维码，请使用下方地址访问。" };
+    }
+  }
+  lanPanelOpen.value = true;
+}
+
+async function refreshLanHosts() {
+  lanHosts.value = await getLanHosts();
+  if (!lanHosts.value.some((host) => host.address === lanHostDraft.value) && lanHosts.value.length) {
+    lanHostDraft.value = lanHosts.value[0].address;
+  }
+}
+
+async function refreshLanHostsFromSettings() {
+  try {
+    await refreshLanHosts();
+  } catch (cause) {
+    error.value = normalizeError(cause);
+  }
+}
+
+async function copyLanAddress() {
+  if (!lanAccessUrl.value) return;
+  try {
+    await navigator.clipboard.writeText(lanAccessUrl.value);
+  } catch {
+    error.value = { kind: "clipboardWriteFailed", message: "无法复制地址，请手动输入手机访问地址。" };
+  }
 }
 
 async function start() {
@@ -241,7 +308,16 @@ async function saveSettings() {
     return;
   }
   try {
-    config.value = await saveConfig({ port: portDraft.value, theme: config.value.theme });
+    if (lanEnabledDraft.value && !lanHostDraft.value) {
+      error.value = { kind: "lanHostRequired", message: "请先选择手机访问使用的局域网地址。" };
+      return;
+    }
+    config.value = await saveConfig({
+      port: portDraft.value,
+      theme: config.value.theme,
+      lanEnabled: lanEnabledDraft.value,
+      lanHost: lanEnabledDraft.value ? lanHostDraft.value : undefined,
+    });
     configSaved.value = true;
     window.setTimeout(() => (configSaved.value = false), 2200);
   } catch (cause) {
@@ -291,6 +367,13 @@ onMounted(async () => {
   systemThemeMedia = window.matchMedia?.("(prefers-color-scheme: dark)");
   systemThemeMedia?.addEventListener("change", handleSystemThemeChange);
   portDraft.value = config.value.port;
+  lanEnabledDraft.value = config.value.lanEnabled;
+  lanHostDraft.value = config.value.lanHost ?? "";
+  try {
+    await refreshLanHosts();
+  } catch (cause) {
+    error.value = normalizeError(cause);
+  }
   unlisten.push(await subscribeState(updateState));
   unlisten.push(await subscribeProgress((event) => (progress.value = event)));
   await refreshAll();
@@ -321,6 +404,10 @@ onUnmounted(() => {
           <PackageCheck :size="18" /> <span>版本管理</span>
           <span v-if="latestVersion && currentVersion !== latestVersion" class="nav-dot" />
         </button>
+        <button :class="['nav-item', { active: activeView === 'mobile' }]" @click="go('mobile')">
+          <Wifi :size="18" /> <span>手机连接</span>
+          <span v-if="isRunning && lanAccessUrl" class="nav-dot ready-dot" />
+        </button>
         <button :class="['nav-item', { active: activeView === 'settings' }]" @click="go('settings')">
           <Settings2 :size="18" /> <span>设置</span>
         </button>
@@ -331,7 +418,7 @@ onUnmounted(() => {
           <span :class="['status-dot', status.tone]" />
           <span>{{ status.label }}</span>
         </div>
-        <span class="app-version">DeepDash 1.0.3</span>
+        <span class="app-version">DeepDash 1.0.4</span>
       </div>
     </aside>
 
@@ -339,7 +426,7 @@ onUnmounted(() => {
       <header v-if="!(isRunning && activeView === 'dashboard')" class="topbar">
         <div>
           <p class="eyebrow">全局版本管理器</p>
-          <h1>{{ activeView === 'dashboard' ? '启动面板' : activeView === 'versions' ? '版本管理' : '偏好设置' }}</h1>
+          <h1>{{ activeView === 'dashboard' ? '启动面板' : activeView === 'versions' ? '版本管理' : activeView === 'mobile' ? '手机连接' : '偏好设置' }}</h1>
         </div>
       </header>
 
@@ -382,11 +469,11 @@ onUnmounted(() => {
         <section v-if="!isRunning" class="content-section">
           <div class="section-heading">
             <div><h2>运行概览</h2><p>启动器只管理自己的服务进程和配置。</p></div>
-            <span class="privacy-note"><MonitorCog :size="15" />仅监听本机回环地址</span>
+            <span class="privacy-note"><MonitorCog :size="15" />{{ lanAccessUrl ? `局域网监听：${dshBindAddress}` : '仅监听本机回环地址' }}</span>
           </div>
           <div class="metrics-grid">
             <div class="metric-item"><span class="metric-label">当前版本</span><strong>{{ currentVersion ?? '未检测到' }}</strong><span class="metric-caption">全局激活版本</span></div>
-            <div class="metric-item"><span class="metric-label">服务端口</span><strong>127.0.0.1:{{ config.port }}</strong><span class="metric-caption">DSH Web 地址</span></div>
+            <div class="metric-item"><span class="metric-label">服务地址</span><strong>{{ dshBindAddress }}</strong><span class="metric-caption">DSH Web 地址</span></div>
             <div class="metric-item"><span class="metric-label">npm 通道</span><strong>{{ latestVersion ?? '读取中' }}</strong><span class="metric-caption">官方 latest 标签</span></div>
             <div class="metric-item"><span class="metric-label">可用版本</span><strong>{{ versions.length || '未读取到' }}</strong><span class="metric-caption">官方 registry 版本数</span></div>
           </div>
@@ -422,12 +509,48 @@ onUnmounted(() => {
         </section>
       </template>
 
+      <template v-else-if="activeView === 'mobile'">
+        <section class="page-intro"><div><p class="eyebrow">局域网访问</p><h2>用手机继续当前 DSH 会话</h2><p>手机和电脑连接同一个可信 Wi-Fi 后，扫码即可打开 DSH Web。</p></div></section>
+        <div class="mobile-connect-layout">
+          <section class="settings-panel mobile-connect-panel">
+            <div class="panel-title"><Wifi :size="18" /><div><h2>手机连接</h2><p>二维码只在你点击显示时生成。</p></div></div>
+            <template v-if="!isRunning">
+              <div class="inline-warning"><CircleHelp :size="18" /><span>DSH 服务尚未运行，请先启动服务。</span><button class="text-button" @click="go('dashboard')">去启动</button></div>
+            </template>
+            <template v-else-if="lanAccessUrl">
+              <div class="mobile-connect-ready"><span class="status-dot running" />局域网访问已开启</div>
+              <button class="button primary mobile-qr-toggle" @click="toggleLanPanel"><Wifi :size="16" />{{ lanPanelOpen ? '隐藏二维码' : '显示二维码' }}</button>
+              <div v-if="lanPanelOpen" class="mobile-qr-area">
+                <img v-if="lanQrCode" :src="lanQrCode" alt="手机访问 DSH 的二维码" class="lan-qr-code" />
+                <span v-else class="qr-loading"><LoaderCircle :size="17" class="spinning" />正在生成二维码...</span>
+                <code>{{ lanAccessUrl }}</code>
+                <button class="button secondary" @click="copyLanAddress"><Copy :size="15" />复制访问地址</button>
+                <button class="text-button" @click="lanPanelOpen = false"><X :size="15" />关闭二维码</button>
+              </div>
+            </template>
+            <template v-else>
+              <div class="inline-warning"><CircleHelp :size="18" /><span>尚未启用手机局域网访问，请在下方配置并保存。</span></div>
+            </template>
+            <div class="mobile-settings-divider" />
+            <div class="mobile-setting-group">
+              <div class="toggle-row mobile-toggle-row"><div><strong>手机局域网访问</strong><small>只在可信私有 Wi-Fi 下启用。</small></div><input v-model="lanEnabledDraft" class="toggle-input" type="checkbox" aria-label="启用手机局域网访问" /></div>
+              <div v-if="lanEnabledDraft" class="lan-host-setting"><label class="field-label" for="mobile-lan-host">本机局域网地址</label><div class="lan-host-control"><select id="mobile-lan-host" v-model="lanHostDraft" class="lan-host-select"><option v-for="host in lanHosts" :key="host.address" :value="host.address">{{ host.name }} - {{ host.address }}</option></select><button class="icon-button" title="刷新局域网地址" aria-label="刷新局域网地址" @click="refreshLanHostsFromSettings"><RefreshCw :size="15" /></button></div><small v-if="lanHosts.length" class="field-help warning-help">同一网络内的设备可操作当前项目，请勿在公共 Wi‑Fi 或公网暴露此端口。</small><small v-else class="field-help warning-help">未发现可用私有 IPv4 地址。请刷新或连接可信 Wi‑Fi。</small></div>
+              <div class="mobile-settings-actions"><button class="button primary" @click="saveSettings"><Check v-if="configSaved" :size="16" /><span>{{ configSaved ? '已保存' : '保存连接设置' }}</span></button><small>保存后重启 DSH 服务才会应用监听地址。</small></div>
+            </div>
+          </section>
+          <section class="settings-panel mobile-help-panel">
+            <div class="panel-title"><MonitorCog :size="18" /><div><h2>使用提示</h2><p>连接后手机可以操作当前项目。</p></div></div>
+            <div class="mobile-help-list"><div><strong>1</strong><span>确认手机和电脑连接同一个可信 Wi-Fi。</span></div><div><strong>2</strong><span>点击“显示二维码”，用手机浏览器扫码。</span></div><div><strong>3</strong><span>扫码完成后，点击“关闭二维码”收起面板。</span></div></div>
+          </section>
+        </div>
+      </template>
+
       <template v-else>
         <section class="page-intro"><div><p class="eyebrow">应用偏好</p><h2>偏好设置</h2><p>这些设置只属于 DeepDash，不会修改 DSH 官方数据。</p></div></section>
         <div class="settings-layout">
           <section class="settings-panel"><div class="panel-title"><Settings2 :size="18" /><div><h2>服务设置</h2><p>下次启动或重启服务时生效。</p></div></div><label class="field-label" for="port">DSH Web 端口</label><div class="port-input"><span>127.0.0.1:</span><input id="port" v-model.number="portDraft" type="number" min="1" max="65535" step="1" /></div><small class="field-help">默认端口为 3080，可使用 1 到 65535 的 TCP 端口。</small><div class="theme-setting"><div><strong>界面主题</strong><small>只影响 DeepDash 外壳，不改变 DSH Web。</small></div><div class="theme-options" role="group" aria-label="界面主题"><button v-for="item in themeOptions" :key="item[0]" :class="['theme-option', { active: config.theme === item[0] }]" @click="changeTheme(item[0])">{{ item[1] }}</button></div></div><div class="settings-actions"><button class="button primary" @click="saveSettings"><Check v-if="configSaved" :size="16" /><span>{{ configSaved ? '已保存' : '保存设置' }}</span></button><button class="button secondary" @click="showDataDirectory"><FolderOpen :size="16" /><span>数据目录</span></button></div></section>
           <section class="settings-panel"><div class="panel-title"><Terminal :size="18" /><div><h2>运行环境</h2><p>启动器使用系统 PATH 和 npm 默认 prefix。</p></div></div><div class="detail-list"><div><span>Node.js</span><code>{{ environment?.node.path ?? '未检测到' }}</code><small>{{ environment?.node.found ? (environment.node.version ?? '不可用：版本检测失败') : '未安装' }}</small></div><div><span>npm</span><code>{{ environment?.npm.path ?? '未检测到' }}</code><small>{{ environment?.npm.found ? (environment.npm.version ?? '不可用：版本检测失败') : '未安装' }}</small></div><div><span>全局 prefix</span><code>{{ environment?.prefix ?? '未检测到' }}</code><small>{{ environment?.prefix ? '由本机 npm 决定' : '不可用：未读取到 prefix' }}</small></div><div><span>dsh</span><code>{{ environment?.dsh.path ?? '未检测到' }}</code><small>{{ environment?.dsh.found ? (environment.dsh.version ?? '不可用：版本检测失败') : '未安装' }}</small></div></div><button class="text-button external-link" @click="go('versions')">前往版本管理 <ChevronRight :size="15" /></button></section>
-          <section class="settings-panel links-panel"><div class="panel-title"><ExternalLink :size="18" /><div><h2>相关链接</h2><p>仅在需要时打开外部官方页面。</p></div></div><a href="https://nodejs.org/" target="_blank" rel="noreferrer" class="link-row"><span>Node.js 官方下载</span><ExternalLink :size="15" /></a><a href="https://github.com/deepseek-ai/deepseek-harness" target="_blank" rel="noreferrer" class="link-row"><span>DSH 官方仓库</span><ExternalLink :size="15" /></a><div class="about-row"><span>应用版本</span><strong>1.0.3</strong></div></section>
+          <section class="settings-panel links-panel"><div class="panel-title"><ExternalLink :size="18" /><div><h2>相关链接</h2><p>仅在需要时打开外部官方页面。</p></div></div><a href="https://nodejs.org/" target="_blank" rel="noreferrer" class="link-row"><span>Node.js 官方下载</span><ExternalLink :size="15" /></a><a href="https://github.com/deepseek-ai/deepseek-harness" target="_blank" rel="noreferrer" class="link-row"><span>DSH 官方仓库</span><ExternalLink :size="15" /></a><div class="about-row"><span>应用版本</span><strong>1.0.4</strong></div></section>
         </div>
       </template>
 

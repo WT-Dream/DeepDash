@@ -4,6 +4,7 @@ import type {
   DshState,
   EnvironmentInfo,
   LauncherConfig,
+  LanHost,
   OperationProgress,
   DshVersion,
 } from "./types";
@@ -45,8 +46,13 @@ const demoVersions: DshVersion[] = [
 ];
 
 export async function getConfig(): Promise<LauncherConfig> {
-  if (!inTauri) return { port: 3080, theme: "system" };
+  if (!inTauri) return { port: 3080, theme: "system", lanEnabled: false };
   return invoke<LauncherConfig>("get_launcher_config");
+}
+
+export async function getLanHosts(): Promise<LanHost[]> {
+  if (!inTauri) return [{ name: "Wi-Fi", address: "192.168.2.9" }];
+  return invoke<LanHost[]>("get_lan_hosts");
 }
 
 export async function saveConfig(config: LauncherConfig): Promise<LauncherConfig> {

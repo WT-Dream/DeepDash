@@ -1,4 +1,4 @@
-export type ViewName = "dashboard" | "versions" | "settings";
+export type ViewName = "dashboard" | "versions" | "mobile" | "settings";
 
 export type DshLifecycleStatus =
   | "notInstalled"
@@ -18,6 +18,13 @@ export type ThemeMode = "system" | "light" | "dark";
 export interface LauncherConfig {
   port: number;
   theme: ThemeMode;
+  lanEnabled: boolean;
+  lanHost?: string;
+}
+
+export interface LanHost {
+  name: string;
+  address: string;
 }
 
 export interface ToolInfo {
@@ -58,6 +65,7 @@ export interface DshState {
   status: DshLifecycleStatus;
   port?: number;
   url?: string;
+  lanUrl?: string;
   currentVersion?: string;
   error?: LauncherError;
 }
