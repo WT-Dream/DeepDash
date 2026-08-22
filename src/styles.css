@@ -120,7 +120,9 @@ p { color: var(--muted); font-size: 12px; line-height: 1.7; }
 
 .embedded-view { position: relative; margin-top: 22px; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; background: #111214; }
 .dsh-frame { display: block; width: 100%; height: max(570px, calc(100vh - 285px)); border: 0; background: #111214; }
-.dsh-quick-control { position: absolute; z-index: 4; top: 12px; right: 3px; display: flex; flex-direction: row-reverse; align-items: flex-start; gap: 7px; }
+.dsh-quick-control { position: absolute; z-index: 4; top: 12px; right: 144px; display: flex; flex-direction: row-reverse; align-items: flex-start; gap: 7px; }
+.dsh-quick-control:not(.open) { pointer-events: none; }
+.dsh-quick-control:not(.open) .dsh-quick-trigger { pointer-events: auto; }
 .dsh-quick-trigger { width: 30px; height: 30px; display: grid; place-items: center; padding: 0; border: 1px solid rgba(255,255,255,.2); border-radius: 7px; color: #eef4ff; background: rgba(20,24,32,.82); box-shadow: 0 5px 16px rgba(0,0,0,.22); backdrop-filter: blur(8px); }
 .dsh-quick-trigger:hover, .dsh-quick-control.open .dsh-quick-trigger { color: #fff; border-color: rgba(142,178,255,.7); background: rgba(43,76,140,.95); }
 .dsh-quick-actions { display: flex; align-items: center; gap: 4px; min-height: 30px; padding: 3px; border: 1px solid rgba(255,255,255,.17); border-radius: 7px; background: rgba(20,24,32,.9); box-shadow: 0 5px 16px rgba(0,0,0,.22); backdrop-filter: blur(8px); opacity: 0; pointer-events: none; transform: translateX(6px); transition: opacity .16s, transform .16s; }

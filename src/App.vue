@@ -455,7 +455,7 @@ onUnmounted(() => {
           <span :class="['status-dot', status.tone]" />
           <span>{{ status.label }}</span>
         </div>
-        <span class="app-version">DeepDash 1.0.6</span>
+        <span class="app-version">DeepDash 1.0.7</span>
       </div>
     </aside>
 
@@ -598,7 +598,7 @@ onUnmounted(() => {
         <div class="settings-layout">
           <section class="settings-panel"><div class="panel-title"><Settings2 :size="18" /><div><h2>服务设置</h2><p>下次启动或重启服务时生效。</p></div></div><label class="field-label" for="port">DSH Web 端口</label><div class="port-input"><span>127.0.0.1:</span><input id="port" v-model.number="portDraft" type="number" min="1" max="65535" step="1" /></div><small class="field-help">默认端口为 3080，可使用 1 到 65535 的 TCP 端口。</small><div class="theme-setting"><div><strong>界面主题</strong><small>只影响 DeepDash 外壳，不改变 DSH Web。</small></div><div class="theme-options" role="group" aria-label="界面主题"><button v-for="item in themeOptions" :key="item[0]" :class="['theme-option', { active: config.theme === item[0] } ]" @click="changeTheme(item[0])">{{ item[1] }}</button></div></div><div class="settings-actions"><button class="button primary" @click="saveSettings"><Check v-if="configSaved" :size="16" /><span>{{ configSaved ? '已保存' : '保存设置' }}</span></button><button class="button secondary" @click="showDataDirectory"><FolderOpen :size="16" /><span>数据目录</span></button></div></section>
           <section class="settings-panel"><div class="panel-title"><Terminal :size="18" /><div><h2>运行环境</h2><p>启动器使用系统 PATH 和 npm 默认 prefix。</p></div></div><div class="detail-list"><div><span>Node.js</span><code>{{ environment?.node.path ?? '未检测到' }}</code><small>{{ environment?.node.found ? (environment.node.version ?? '不可用：版本检测失败') : '未安装' }}</small></div><div><span>npm</span><code>{{ environment?.npm.path ?? '未检测到' }}</code><small>{{ environment?.npm.found ? (environment.npm.version ?? '不可用：版本检测失败') : '未安装' }}</small></div><div><span>全局 prefix</span><code>{{ environment?.prefix ?? '未检测到' }}</code><small>{{ environment?.prefix ? '由本机 npm 决定' : '不可用：未读取到 prefix' }}</small></div><div><span>dsh</span><code>{{ environment?.dsh.path ?? '未检测到' }}</code><small>{{ environment?.dsh.found ? (environment.dsh.version ?? '不可用：版本检测失败') : '未安装' }}</small></div></div><button class="text-button external-link" @click="go('versions')">前往版本管理 <ChevronRight :size="15" /></button></section>
-          <section class="settings-panel links-panel"><div class="panel-title"><ExternalLink :size="18" /><div><h2>相关链接</h2><p>仅在需要时打开外部官方页面。</p></div></div><a href="https://nodejs.org/" target="_blank" rel="noreferrer" class="link-row"><span>Node.js 官方下载</span><ExternalLink :size="15" /></a><a href="https://github.com/deepseek-ai/deepseek-harness" target="_blank" rel="noreferrer" class="link-row"><span>DSH 官方仓库</span><ExternalLink :size="15" /></a><div class="about-row"><span>应用版本</span><strong>1.0.6</strong></div></section>
+          <section class="settings-panel links-panel"><div class="panel-title"><ExternalLink :size="18" /><div><h2>相关链接</h2><p>仅在需要时打开外部官方页面。</p></div></div><a href="https://nodejs.org/" target="_blank" rel="noreferrer" class="link-row"><span>Node.js 官方下载</span><ExternalLink :size="15" /></a><a href="https://github.com/deepseek-ai/deepseek-harness" target="_blank" rel="noreferrer" class="link-row"><span>DSH 官方仓库</span><ExternalLink :size="15" /></a><div class="about-row"><span>应用版本</span><strong>1.0.7</strong></div></section>
         </div>
       </template>
 
