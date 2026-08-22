@@ -1,6 +1,6 @@
 [package]
 name = "deepdash"
-version = "1.0.1"
+version = "1.0.2"
 description = "DeepSeek Harness desktop launcher"
 authors = ["DeepDash contributors"]
 edition = "2021"

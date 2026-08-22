@@ -10,6 +10,7 @@ DeepDash 是 Windows 桌面启动器，用于安装、切换和运行 [DeepSeek 
 - 支持重启 DSH 服务
 - 提供端口、主题和数据目录设置
 - 启动前检测 DSH 端口占用，并明确提示端口冲突
+- 保留 DSH Web 自身的 HTML5 拖放处理
 
 ## 系统要求
 
@@ -23,7 +24,7 @@ DeepDash 使用本机 npm 默认 global prefix，不捆绑 Node.js、npm 或 DSH
 
 从 [Releases](https://github.com/WT-Dream/DeepDash/releases) 下载并运行：
 
-`DeepDash_1.0.1_x64_en-US.msi`
+`DeepDash_1.0.2_x64_en-US.msi`
 
 安装后启动 DeepDash，在“版本管理”中安装或切换 DSH 版本，然后从启动面板启动 DSH Web。
 
