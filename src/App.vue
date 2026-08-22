@@ -51,12 +51,11 @@ import type {
   OperationProgress,
   ThemeMode,
   ViewName,
-  VersionCheckFrequency,
 } from "./types";
 import mascotImage from "./assets/dsh-mascot.png";
 
 const activeView = ref<ViewName>("dashboard");
-const config = ref<LauncherConfig>({ port: 3080, theme: "system", lanEnabled: false, versionCheckFrequency: "daily" });
+const config = ref<LauncherConfig>({ port: 3080, theme: "system", lanEnabled: false });
 const environment = ref<EnvironmentInfo>();
 const versions = ref<DshVersion[]>([]);
 const state = ref<DshState>({ status: "stopped" });
@@ -76,10 +75,8 @@ const lanQrCode = ref<string>();
 const lanPanelOpen = ref(false);
 const dshControlsOpen = ref(false);
 const showDshView = ref(false);
-const versionUpdate = ref<DshVersion>();
 const unlisten: Array<(() => void) | undefined> = [];
 let systemThemeMedia: MediaQueryList | undefined;
-let versionCheckTimer: number | undefined;
 
 const statusMeta: Record<DshLifecycleStatus, { label: string; tone: string }> = {
   notInstalled: { label: "未安装", tone: "muted" },
@@ -100,12 +97,12 @@ const isRunning = computed(() => state.value.status === "running");
 const isStarting = computed(() => ["starting", "stopping"].includes(state.value.status));
 const hasEnvironmentError = computed(() => ["missingNode", "brokenNode", "missingNpm", "brokenNpm"].includes(environment.value?.status ?? ""));
 const latestVersion = computed(() => versions.value.find((item) => item.tags.includes("latest"))?.version);
+const nextVersion = computed(() => versions.value.find((item) => item.tags.includes("next"))?.version);
 const canStart = computed(() => Boolean(environment.value?.dsh.found) && !busy.value && !isStarting.value && !isRunning.value);
 const canManageVersions = computed(() => Boolean(environment.value?.npm.found) && !busy.value);
 const themeOptions: Array<[ThemeMode, string]> = [["system", "跟随系统"], ["light", "浅色"], ["dark", "深色"]];
 const lanAccessUrl = computed(() => state.value.lanUrl);
 const dshBindAddress = computed(() => lanAccessUrl.value?.replace(/^https?:\/\//, "") ?? `127.0.0.1:${config.value.port}`);
-const versionCheckOptions: Array<[VersionCheckFrequency, string]> = [["daily", "每天"], ["weekly", "每周"], ["never", "永不"]];
 
 function resolvedTheme(mode: ThemeMode) {
   return mode === "system"
@@ -139,7 +136,6 @@ function errorTitle(value?: LauncherError) {
     invalidPort: "端口无效",
     processExited: "DSH 进程已退出",
     invalidTheme: "主题设置无效",
-    invalidVersionCheckFrequency: "版本检查周期无效",
     lanHostRequired: "请选择局域网地址",
     invalidLanHost: "局域网地址无效",
     lanHostUnavailable: "局域网地址不可用",
@@ -152,8 +148,7 @@ function errorTitle(value?: LauncherError) {
   return titles[value.kind] ?? "操作未完成";
 }
 
-async function refreshAll(options: { checkVersions?: boolean } = {}) {
-  const checkVersions = options.checkVersions ?? true;
+async function refreshAll() {
   refreshing.value = true;
   error.value = undefined;
   try {
@@ -168,12 +163,10 @@ async function refreshAll(options: { checkVersions?: boolean } = {}) {
     dshUrl.value = nextState.url;
     showDshView.value = nextState.status === "running";
     portDraft.value = config.value.port;
-    if (checkVersions) {
-      try {
-        versions.value = await getVersions();
-      } catch (cause) {
-        error.value = normalizeError(cause);
-      }
+    try {
+      versions.value = await getVersions();
+    } catch (cause) {
+      error.value = normalizeError(cause);
     }
   } catch (cause) {
     error.value = normalizeError(cause);
@@ -181,87 +174,6 @@ async function refreshAll(options: { checkVersions?: boolean } = {}) {
     refreshing.value = false;
     loading.value = false;
   }
-}
-
-function parseVersion(value: string) {
-  const match = value.trim().replace(/^v/, "").match(/^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?/);
-  if (!match) return undefined;
-  return { major: Number(match[1]), minor: Number(match[2]), patch: Number(match[3]), pre: match[4]?.split(".") ?? [] };
-}
-
-function compareVersions(left: string, right: string) {
-  const a = parseVersion(left);
-  const b = parseVersion(right);
-  if (!a || !b) return left.localeCompare(right);
-  for (const key of ["major", "minor", "patch"] as const) {
-    if (a[key] !== b[key]) return a[key] - b[key];
-  }
-  if (!a.pre.length && b.pre.length) return 1;
-  if (a.pre.length && !b.pre.length) return -1;
-  for (let index = 0; index < Math.max(a.pre.length, b.pre.length); index += 1) {
-    const av = a.pre[index];
-    const bv = b.pre[index];
-    if (av === undefined) return -1;
-    if (bv === undefined) return 1;
-    if (av === bv) continue;
-    const an = /^\d+$/.test(av);
-    const bn = /^\d+$/.test(bv);
-    if (an && bn) return Number(av) - Number(bv);
-    if (an !== bn) return an ? -1 : 1;
-    return av.localeCompare(bv);
-  }
-  return 0;
-}
-
-function nextVersionNotice(items: DshVersion[]) {
-  const latest = items.find((item) => item.tags.includes("latest"))?.version;
-  const current = currentVersion.value;
-  if (!latest || !current || compareVersions(latest, current) <= 0) return undefined;
-  return latest;
-}
-
-function checkDue() {
-  if (config.value.versionCheckFrequency === "never") return false;
-  const last = config.value.lastVersionCheckAt ? Date.parse(config.value.lastVersionCheckAt) : NaN;
-  if (!Number.isFinite(last)) return true;
-  const interval = config.value.versionCheckFrequency === "weekly" ? 7 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
-  return Date.now() - last >= interval;
-}
-
-async function checkVersionsAutomatically() {
-  if (!checkDue() || refreshing.value || busy.value) return;
-  try {
-    const items = await getVersions();
-    versions.value = items;
-    const checkedAt = new Date().toISOString();
-    const candidate = nextVersionNotice(items);
-    const nextConfig = { ...config.value, lastVersionCheckAt: checkedAt };
-    if (candidate && candidate !== config.value.notifiedVersion) {
-      nextConfig.notifiedVersion = candidate;
-      versionUpdate.value = items.find((item) => item.version === candidate);
-    }
-    config.value = await saveConfig(nextConfig);
-  } catch (cause) {
-    error.value = normalizeError(cause);
-    // 失败时也记录本次尝试，避免网络不可用时重复请求。
-    config.value = { ...config.value, lastVersionCheckAt: new Date().toISOString() };
-  } finally {
-    scheduleVersionCheck();
-  }
-}
-
-function scheduleVersionCheck() {
-  if (versionCheckTimer !== undefined) window.clearTimeout(versionCheckTimer);
-  if (config.value.versionCheckFrequency === "never") return;
-  const interval = config.value.versionCheckFrequency === "weekly" ? 7 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
-  const last = config.value.lastVersionCheckAt ? Date.parse(config.value.lastVersionCheckAt) : 0;
-  const delay = Math.max(1000, interval - (Date.now() - (Number.isFinite(last) ? last : 0)));
-  versionCheckTimer = window.setTimeout(() => void checkVersionsAutomatically(), delay);
-}
-
-function openVersionUpdate() {
-  versionUpdate.value = undefined;
-  go("versions");
 }
 
 function normalizeError(cause: unknown): LauncherError {
@@ -441,7 +353,6 @@ async function saveSettings() {
       lanEnabled: lanEnabledDraft.value,
       lanHost: lanEnabledDraft.value ? lanHostDraft.value : undefined,
     });
-    scheduleVersionCheck();
     configSaved.value = true;
     window.setTimeout(() => (configSaved.value = false), 2200);
   } catch (cause) {
@@ -465,18 +376,6 @@ async function changeTheme(mode: ThemeMode) {
     configSaved.value = true;
     window.setTimeout(() => (configSaved.value = false), 2200);
   } catch (cause) {
-    error.value = normalizeError(cause);
-  }
-}
-
-async function changeVersionCheckFrequency(frequency: VersionCheckFrequency) {
-  const previous = config.value.versionCheckFrequency;
-  config.value.versionCheckFrequency = frequency;
-  try {
-    config.value = await saveConfig({ ...config.value, versionCheckFrequency: frequency });
-    scheduleVersionCheck();
-  } catch (cause) {
-    config.value.versionCheckFrequency = previous;
     error.value = normalizeError(cause);
   }
 }
@@ -514,15 +413,12 @@ onMounted(async () => {
   }
   unlisten.push(await subscribeState(updateState));
   unlisten.push(await subscribeProgress((event) => (progress.value = event)));
-  await refreshAll({ checkVersions: false });
-  await checkVersionsAutomatically();
-  scheduleVersionCheck();
+  await refreshAll();
 });
 
 onUnmounted(() => {
   unlisten.forEach((remove) => remove?.());
   systemThemeMedia?.removeEventListener("change", handleSystemThemeChange);
-  if (versionCheckTimer !== undefined) window.clearTimeout(versionCheckTimer);
 });
 </script>
 
@@ -559,7 +455,7 @@ onUnmounted(() => {
           <span :class="['status-dot', status.tone]" />
           <span>{{ status.label }}</span>
         </div>
-        <span class="app-version">DeepDash 1.0.5</span>
+        <span class="app-version">DeepDash 1.0.6</span>
       </div>
     </aside>
 
@@ -620,7 +516,7 @@ onUnmounted(() => {
             <div class="metric-item"><span class="metric-label">当前版本</span><strong>{{ currentVersion ?? '未检测到' }}</strong><span class="metric-caption">全局激活版本</span></div>
             <div class="metric-item"><span class="metric-label">服务地址</span><strong>{{ dshBindAddress }}</strong><span class="metric-caption">DSH Web 地址</span></div>
             <div class="metric-item"><span class="metric-label">npm 通道</span><strong>{{ latestVersion ?? '读取中' }}</strong><span class="metric-caption">官方 latest 标签</span></div>
-            <div class="metric-item"><span class="metric-label">可用版本</span><strong>{{ versions.length || '未读取到' }}</strong><span class="metric-caption">官方 registry 版本数</span></div>
+            <div class="metric-item"><span class="metric-label">next 版本</span><strong>{{ nextVersion ?? '暂无 next 版本' }}</strong><span class="metric-caption">官方 next 标签</span></div>
           </div>
         </section>
 
@@ -634,8 +530,8 @@ onUnmounted(() => {
         </section>
 
         <section v-if="dshUrl" v-show="showDshView" class="embedded-view">
-          <div :class="['dsh-quick-control', { open: dshControlsOpen }]" @mouseenter="dshControlsOpen = true" @mouseleave="dshControlsOpen = false">
-            <button class="dsh-quick-trigger" title="DeepDash 控制" aria-label="DeepDash 控制" @click="dshControlsOpen = !dshControlsOpen"><Gauge :size="16" /></button>
+          <div :class="['dsh-quick-control', { open: dshControlsOpen }]" @mouseleave="dshControlsOpen = false">
+            <button class="dsh-quick-trigger" title="DeepDash 控制" aria-label="DeepDash 控制" @mouseenter="dshControlsOpen = true"><Gauge :size="16" /></button>
             <div class="dsh-quick-actions" aria-label="DeepDash 快捷操作">
               <button class="dsh-quick-action" @click="openLanQrFromDsh"><Wifi :size="15" /><span>手机连接</span></button>
               <button class="dsh-quick-action" @click="returnToDeepDash"><Gauge :size="15" /><span>返回 DeepDash</span></button>
@@ -646,7 +542,7 @@ onUnmounted(() => {
       </template>
 
       <template v-else-if="activeView === 'versions'">
-        <section class="page-intro"><div><p class="eyebrow">版本选择</p><h2>选择全局激活版本</h2><p>每次安装或切换都会替换本机 npm 的当前全局版本。</p></div><div class="version-toolbar"><label for="version-check-frequency">自动</label><select id="version-check-frequency" :value="config.versionCheckFrequency" aria-label="自动检查 DSH 更新周期" @change="changeVersionCheckFrequency(($event.target as HTMLSelectElement).value as VersionCheckFrequency)"><option v-for="item in versionCheckOptions" :key="item[0]" :value="item[0]">{{ item[1] }}</option></select><button class="button secondary" :disabled="refreshing" @click="() => refreshAll()"><RefreshCw :size="16" />刷新列表</button></div></section>
+        <section class="page-intro"><div><p class="eyebrow">版本选择</p><h2>选择全局激活版本</h2><p>每次安装或切换都会替换本机 npm 的当前全局版本。</p></div><button class="button secondary" :disabled="refreshing" @click="() => refreshAll()"><RefreshCw :size="16" />刷新列表</button></section>
         <div v-if="hasEnvironmentError" class="inline-warning"><CircleHelp :size="18" /><span>{{ environmentMessage() }} 版本安装操作暂不可执行。</span><button class="text-button" @click="go('settings')">去设置</button></div>
         <section class="version-panel">
           <div class="version-panel-head"><div><h2>DSH 版本</h2><span>{{ versions.length }} 个版本来自官方 registry</span></div><span v-if="progress" class="operation-state"><LoaderCircle :size="15" class="spinning" />{{ progress.message }} <button class="text-button cancel-button" @click="cancelOperation">取消</button></span></div>
@@ -702,7 +598,7 @@ onUnmounted(() => {
         <div class="settings-layout">
           <section class="settings-panel"><div class="panel-title"><Settings2 :size="18" /><div><h2>服务设置</h2><p>下次启动或重启服务时生效。</p></div></div><label class="field-label" for="port">DSH Web 端口</label><div class="port-input"><span>127.0.0.1:</span><input id="port" v-model.number="portDraft" type="number" min="1" max="65535" step="1" /></div><small class="field-help">默认端口为 3080，可使用 1 到 65535 的 TCP 端口。</small><div class="theme-setting"><div><strong>界面主题</strong><small>只影响 DeepDash 外壳，不改变 DSH Web。</small></div><div class="theme-options" role="group" aria-label="界面主题"><button v-for="item in themeOptions" :key="item[0]" :class="['theme-option', { active: config.theme === item[0] } ]" @click="changeTheme(item[0])">{{ item[1] }}</button></div></div><div class="settings-actions"><button class="button primary" @click="saveSettings"><Check v-if="configSaved" :size="16" /><span>{{ configSaved ? '已保存' : '保存设置' }}</span></button><button class="button secondary" @click="showDataDirectory"><FolderOpen :size="16" /><span>数据目录</span></button></div></section>
           <section class="settings-panel"><div class="panel-title"><Terminal :size="18" /><div><h2>运行环境</h2><p>启动器使用系统 PATH 和 npm 默认 prefix。</p></div></div><div class="detail-list"><div><span>Node.js</span><code>{{ environment?.node.path ?? '未检测到' }}</code><small>{{ environment?.node.found ? (environment.node.version ?? '不可用：版本检测失败') : '未安装' }}</small></div><div><span>npm</span><code>{{ environment?.npm.path ?? '未检测到' }}</code><small>{{ environment?.npm.found ? (environment.npm.version ?? '不可用：版本检测失败') : '未安装' }}</small></div><div><span>全局 prefix</span><code>{{ environment?.prefix ?? '未检测到' }}</code><small>{{ environment?.prefix ? '由本机 npm 决定' : '不可用：未读取到 prefix' }}</small></div><div><span>dsh</span><code>{{ environment?.dsh.path ?? '未检测到' }}</code><small>{{ environment?.dsh.found ? (environment.dsh.version ?? '不可用：版本检测失败') : '未安装' }}</small></div></div><button class="text-button external-link" @click="go('versions')">前往版本管理 <ChevronRight :size="15" /></button></section>
-          <section class="settings-panel links-panel"><div class="panel-title"><ExternalLink :size="18" /><div><h2>相关链接</h2><p>仅在需要时打开外部官方页面。</p></div></div><a href="https://nodejs.org/" target="_blank" rel="noreferrer" class="link-row"><span>Node.js 官方下载</span><ExternalLink :size="15" /></a><a href="https://github.com/deepseek-ai/deepseek-harness" target="_blank" rel="noreferrer" class="link-row"><span>DSH 官方仓库</span><ExternalLink :size="15" /></a><div class="about-row"><span>应用版本</span><strong>1.0.5</strong></div></section>
+          <section class="settings-panel links-panel"><div class="panel-title"><ExternalLink :size="18" /><div><h2>相关链接</h2><p>仅在需要时打开外部官方页面。</p></div></div><a href="https://nodejs.org/" target="_blank" rel="noreferrer" class="link-row"><span>Node.js 官方下载</span><ExternalLink :size="15" /></a><a href="https://github.com/deepseek-ai/deepseek-harness" target="_blank" rel="noreferrer" class="link-row"><span>DSH 官方仓库</span><ExternalLink :size="15" /></a><div class="about-row"><span>应用版本</span><strong>1.0.6</strong></div></section>
         </div>
       </template>
 
@@ -718,15 +614,6 @@ onUnmounted(() => {
         </section>
       </div>
 
-      <div v-if="versionUpdate" class="version-update-modal" role="dialog" aria-modal="true" aria-label="发现 DSH 新版本" @click.self="versionUpdate = undefined">
-        <section class="version-update-dialog">
-          <div class="version-update-icon"><ArrowUpCircle :size="22" /></div>
-          <p class="eyebrow">版本更新</p>
-          <h2>发现 DSH 新版本</h2>
-          <p>官方 registry 已发布 {{ versionUpdate.version }}，当前版本为 {{ currentVersion }}。</p>
-          <div class="version-update-actions"><button class="button primary" @click="openVersionUpdate"><PackageCheck :size="15" />查看版本</button><button class="button secondary" @click="versionUpdate = undefined">稍后处理</button></div>
-        </section>
-      </div>
     </main>
   </div>
 </template>

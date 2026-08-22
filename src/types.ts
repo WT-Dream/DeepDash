@@ -14,16 +14,11 @@ export type DshLifecycleStatus =
   | "startupTimeout";
 
 export type ThemeMode = "system" | "light" | "dark";
-export type VersionCheckFrequency = "daily" | "weekly" | "never";
-
 export interface LauncherConfig {
   port: number;
   theme: ThemeMode;
   lanEnabled: boolean;
   lanHost?: string;
-  versionCheckFrequency: VersionCheckFrequency;
-  lastVersionCheckAt?: string;
-  notifiedVersion?: string;
 }
 
 export interface LanHost {

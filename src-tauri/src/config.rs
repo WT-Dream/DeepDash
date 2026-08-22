@@ -62,15 +62,6 @@ fn validate(config: &LauncherConfig) -> Result<(), crate::models::LauncherError>
             "主题模式无效。",
         ));
     }
-    if !matches!(
-        config.version_check_frequency.as_str(),
-        "daily" | "weekly" | "never"
-    ) {
-        return Err(crate::models::LauncherError::new(
-            "invalidVersionCheckFrequency",
-            "版本检查周期无效。",
-        ));
-    }
     if config.lan_enabled {
         let Some(host) = config.lan_host.as_deref() else {
             return Err(crate::models::LauncherError::new(

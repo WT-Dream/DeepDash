@@ -10,12 +10,6 @@ pub struct LauncherConfig {
     pub lan_enabled: bool,
     #[serde(default)]
     pub lan_host: Option<String>,
-    #[serde(default = "default_version_check_frequency")]
-    pub version_check_frequency: String,
-    #[serde(default)]
-    pub last_version_check_at: Option<String>,
-    #[serde(default)]
-    pub notified_version: Option<String>,
 }
 
 impl Default for LauncherConfig {
@@ -25,9 +19,6 @@ impl Default for LauncherConfig {
             theme: default_theme(),
             lan_enabled: false,
             lan_host: None,
-            version_check_frequency: default_version_check_frequency(),
-            last_version_check_at: None,
-            notified_version: None,
         }
     }
 }
@@ -41,10 +32,6 @@ pub struct LanHost {
 
 fn default_theme() -> String {
     "system".to_string()
-}
-
-fn default_version_check_frequency() -> String {
-    "daily".to_string()
 }
 
 #[derive(Debug, Clone, Serialize)]

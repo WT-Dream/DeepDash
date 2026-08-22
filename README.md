@@ -1,10 +1,11 @@
 # DeepDash
 
-## 1.0.5 更新内容
+## 1.0.6 更新内容
 
-- 调整版本管理页的自动检查控件：放大“自动”标签，周期选项改为“每天 / 每周 / 永不”。
-- 缩短周期选择框，保持紧凑的版本工具栏布局。
-- 自动检查仍按选定周期运行，同一版本只弹出一次更新提示。
+- 版本检查恢复为打开 DeepDash 时自动读取一次，移除周期检查控件和更新弹窗。
+- 启动面板显示官方 `next` 通道的最新版本号；没有发布时显示“暂无 next 版本”。
+- DSH 快捷控制改为仅悬停右上角小图标触发，操作区距右侧 3px。
+- 保留手机二维码连接、返回 DeepDash 和 DSH 服务保持运行的能力。
 
 DeepDash 是 Windows 桌面启动器，用于安装、切换和运行 [DeepSeek Harness（DSH）](https://github.com/deepseek-ai/deepseek-harness)。它提供原生窗口、版本管理和系统托盘控制，不封装或修改 DSH 官方 Web 界面。
 
@@ -32,7 +33,7 @@ DeepDash 使用本机 npm 默认 global prefix，不捆绑 Node.js、npm 或 DSH
 
 从 [Releases](https://github.com/WT-Dream/DeepDash/releases) 下载并运行：
 
-`DeepDash_1.0.5_x64_en-US.msi`
+`DeepDash_1.0.6_x64_en-US.msi`
 
 安装后启动 DeepDash，在“版本管理”中安装或切换 DSH 版本，然后从启动面板启动 DSH Web。
 
