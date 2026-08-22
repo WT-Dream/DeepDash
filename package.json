@@ -1,6 +1,6 @@
 {
   "name": "deepdash",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "DeepSeek Harness global version manager and desktop launcher",
   "type": "module",
